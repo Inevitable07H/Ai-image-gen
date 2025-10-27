@@ -1,9 +1,9 @@
 import streamlit as st
-from stability_sdk import client
-import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
+import requests
 from groq import Groq
 from PIL import Image
-import io, os
+import io
+import os
 
 # ---- PAGE CONFIG ----
 st.set_page_config(page_title="🎨 AI Image Generator", page_icon="🎨", layout="centered")
@@ -39,15 +39,10 @@ st.title("🎨 **Stability AI – Creative Image Generator**")
 st.markdown("Enhance your ideas with smart prompts and cinematic visuals powered by Groq & Stability AI.")
 
 # ---- API KEYS ----
-os.environ["STABILITY_API_KEY"] = "sk-0DiRwm0wJ5DLOmO0Il2X5yu6gzt4Sx4RKajZ5dV1xqlwVAZW"
+STABILITY_API_KEY = "sk-0DiRwm0wJ5DLOmO0Il2X5yu6gzt4Sx4RKajZ5dV1xqlwVAZW"
 GROQ_API_KEY = "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"
 
-# ---- Initialize clients ----
-stability_api = client.StabilityInference(
-    key=os.environ['STABILITY_API_KEY'],
-    engine="stable-diffusion-xl-1024-v1-0",
-    verbose=True,
-)
+# ---- Initialize Groq client ----
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ---- Session Management ----
@@ -106,43 +101,66 @@ with col1:
 
                 enhanced_prompt = response.choices[0].message.content.strip()
                 st.session_state["enhanced_prompt"] = enhanced_prompt
-                st.success(f"✅ Prompt enhanced successfully in {mood} mood!")
+
+                # Auto-fill enhanced prompt back into the text box
+                st.experimental_rerun()
 
             except Exception as e:
                 st.error(f"❌ Error enhancing prompt: {e}")
+
+# ---- REST Image Generator (Multipart Form Data) ----
+def generate_image(prompt: str):
+    try:
+        url = "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+        headers = {
+            "Authorization": f"Bearer {STABILITY_API_KEY}",
+            "Accept": "image/*",  # Required by API
+        }
+        files = {
+            "none": (None, ""),  # Dummy field to satisfy multipart
+        }
+        data = {
+            "prompt": prompt,
+            "mode": "text-to-image",
+            "output_format": "png",
+            "aspect_ratio": "16:9",
+        }
+
+        response = requests.post(url, headers=headers, files=files, data=data)
+
+        if response.status_code == 200:
+            img = Image.open(io.BytesIO(response.content))
+            return img
+        else:
+            st.error(f"⚠️ API Error {response.status_code}: {response.text}")
+            return None
+
+    except Exception as e:
+        st.error(f"❌ Image generation failed: {e}")
+        return None
 
 # ---- Generate Image ----
 with col2:
     if st.button("🎨 Generate Image", use_container_width=True):
         final_prompt = st.session_state["enhanced_prompt"] or prompt
 
-        st.info("Generating your image... please wait ⏳")
+        if not final_prompt.strip():
+            st.warning("⚠️ Please enter or enhance a prompt first!")
+        else:
+            st.info("Generating your image... please wait ⏳")
 
-        answers = stability_api.generate(
-            prompt=final_prompt,
-            cfg_scale=8.0,
-            steps=50,
-            width=2536,
-            height=896,
-            sampler=generation.SAMPLER_K_DPMPP_2M,
-        )
-
-        for resp in answers:
-            for artifact in resp.artifacts:
-                if artifact.finish_reason == generation.FILTER:
-                    st.error("⚠️ Request filtered (possibly unsafe content).")
-                elif artifact.type == generation.ARTIFACT_IMAGE:
-                    img = Image.open(io.BytesIO(artifact.binary))
-                    st.image(img, caption=final_prompt, use_column_width=True)
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    st.download_button(
-                        "📥 Download Image",
-                        data=buf.getvalue(),
-                        file_name="ai_generated_image.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
+            img = generate_image(final_prompt)
+            if img:
+                st.image(img, caption=final_prompt, use_column_width=True)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                st.download_button(
+                    "📥 Download Image",
+                    data=buf.getvalue(),
+                    file_name="ai_generated_image.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
 
 # ---- Footer ----
 st.markdown(
